@@ -72,7 +72,7 @@ function injectStyle() {
   s.id = "kjideo-style";
   s.textContent = `
     .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; min-width:0; }
-    .kjideo-canvas { cursor:crosshair; display:block; width:100%; height:auto; flex:0 0 auto; background:#1a1a1a; border-radius:4px; outline:none; }
+    .kjideo-canvas { cursor:crosshair; display:block; max-width:100%; width:100%; height:auto; flex:0 0 auto; align-self:center; background:#1a1a1a; border-radius:4px; outline:none; object-fit:contain; }
     .kjideo-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; min-width:0; }
     .kjideo-bar span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
     .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; min-width:0; }
@@ -229,6 +229,7 @@ app.registerExtension({
       wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(canvasEl); wrap.appendChild(panel);
 
       const TOOLBAR_H = 44;
+      const DEFAULT_EDITOR_H = 520;
       node._widgetHeight = 520;
       node.ideoEditor = node.addDOMWidget("zimage_region_editor", "ZImageTurboRegionEditor", wrap, {
         serialize: false, hideOnZoom: false,
@@ -237,10 +238,11 @@ app.registerExtension({
       node.resizable = true;
 
       // â”€â”€ canvas sizing â”€â”€
-      // The display size is CSS-driven (width:100% + aspect-ratio); the backing store
-      // is sized to display Ă— devicePixelRatio in prepCanvas() so text/lines stay crisp.
+      // The display size is capped by the current node height. Tall images shrink into
+      // the editor instead of forcing the node to grow vertically.
       function setCanvasSize(w, h) {
         canvasEl.style.aspectRatio = `${w} / ${h}`;          // display shape only
+        layoutCanvas(w, h);
         if (node.graph) node.graph.setDirtyCanvas(true, true);
       }
       function syncCanvasToDims() {
@@ -249,17 +251,34 @@ app.registerExtension({
         drawCanvas();
       }
 
-      // Content height = panel's bottom edge in the wrapper (includes toolbar/canvas/gaps).
+      function layoutCanvas(w = wWidget?.value || 1024, h = hWidget?.value || 1024) {
+        const ratio = Math.max(1, h) / Math.max(1, w);
+        const nodeW = Math.max(260, node.size?.[0] || 420);
+        const widgetH = Math.max(300, node.size?.[1] || DEFAULT_EDITOR_H);
+        const reservedH = (bar.offsetHeight || TOOLBAR_H)
+          + (styleBar.offsetHeight || 0)
+          + (panel.offsetHeight || 132)
+          + 30;
+        const maxCanvasW = Math.max(120, nodeW - 30);
+        const maxCanvasH = Math.max(120, widgetH - reservedH);
+        let displayW = maxCanvasW;
+        let displayH = Math.round(displayW * ratio);
+        if (displayH > maxCanvasH) {
+          displayH = maxCanvasH;
+          displayW = Math.max(80, Math.round(displayH / ratio));
+        }
+        canvasEl.style.width = `${Math.round(displayW)}px`;
+        canvasEl.style.height = `${Math.round(displayH)}px`;
+      }
+
       function recalcWidgetHeight() {
-        const ratio = (hWidget?.value || 1) / (wWidget?.value || 1);
-        const estimatedCanvasH = Math.max(160, Math.round(Math.max(260, node.size[0] - 30) * ratio));
-        const measuredH = panel.offsetTop + panel.offsetHeight;
-        node._widgetHeight = Math.max(360, Math.ceil((measuredH || (estimatedCanvasH + TOOLBAR_H + 180)) + 14));
+        const currentH = node.size?.[1] || DEFAULT_EDITOR_H;
+        node._widgetHeight = Math.max(300, currentH - 80);
+        layoutCanvas();
       }
       function fitNode() {
         recalcWidgetHeight();
-        const minH = node.computeSize()[1];
-        if (node.size[1] < minH) node.setSize([node.size[0], minH]);
+        if (node.graph) node.graph.setDirtyCanvas(true, true);
       }
       function scheduleFit() {
         requestAnimationFrame(() => {

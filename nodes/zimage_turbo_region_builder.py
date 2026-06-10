@@ -39,6 +39,18 @@ def _parse_json_list(s):
     return []
 
 
+def _parse_int(v, default, min_v=None, max_v=None):
+    try:
+        out = int(v)
+    except Exception:
+        out = default
+    if min_v is not None:
+        out = max(min_v, out)
+    if max_v is not None:
+        out = min(max_v, out)
+    return out
+
+
 def _dumps(v):
     return json.dumps(v, ensure_ascii=False, indent=2)
 
@@ -214,7 +226,8 @@ serialized region data for workflow save/load.
                 io.Image.Input("image", optional=True, tooltip="Optional source/reference image shown in the editor and passed through."),
                 io.Vae.Input("vae", optional=True, tooltip="Optional VAE. When provided with an image, the node also outputs an encoded latent with combined_mask as noise_mask for img2img regional edits."),
                 io.String.Input("regions_data", default="", socketless=True, advanced=True),
-                io.Int.Input("bg_brightness", default=35, min=0, max=100, socketless=True, advanced=True),
+                io.String.Input("bg_brightness", default="35", socketless=True, advanced=True,
+                                tooltip="Background brightness. String for compatibility with older workflow widget ordering."),
                 io.Int.Input("batch_size", default=1, min=1, max=4096,
                              tooltip="Batch size for the latent_with_noise_mask output. Kept at the end for workflow compatibility."),
             ],
@@ -251,6 +264,11 @@ serialized region data for workflow save/load.
         bg_brightness=35,
         batch_size=1,
     ) -> io.NodeOutput:
+        if isinstance(bg_brightness, str) and bg_brightness.lstrip().startswith("["):
+            if not regions_data:
+                regions_data = bg_brightness
+            bg_brightness = 35
+        bg_brightness = _parse_int(bg_brightness, 35, 0, 100)
         boxes = [b for b in _parse_json_list(regions_data) if isinstance(b, dict)]
         masks = []
         bbox_dicts = []
