@@ -229,8 +229,10 @@ app.registerExtension({
       wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(canvasEl); wrap.appendChild(panel);
 
       const TOOLBAR_H = 44;
+      const MIN_EDITOR_H = 420;
       const DEFAULT_EDITOR_H = 520;
-      node._widgetHeight = 520;
+      const MAX_EDITOR_H = 720;
+      node._widgetHeight = DEFAULT_EDITOR_H;
       node.ideoEditor = node.addDOMWidget("zimage_region_editor", "ZImageTurboRegionEditor", wrap, {
         serialize: false, hideOnZoom: false,
         getMinHeight: () => node._widgetHeight,
@@ -254,7 +256,7 @@ app.registerExtension({
       function layoutCanvas(w = wWidget?.value || 1024, h = hWidget?.value || 1024) {
         const ratio = Math.max(1, h) / Math.max(1, w);
         const nodeW = Math.max(260, node.size?.[0] || 420);
-        const widgetH = Math.max(300, node.size?.[1] || DEFAULT_EDITOR_H);
+        const widgetH = Math.min(MAX_EDITOR_H, Math.max(MIN_EDITOR_H, node.size?.[1] || DEFAULT_EDITOR_H));
         const reservedH = (bar.offsetHeight || TOOLBAR_H)
           + (styleBar.offsetHeight || 0)
           + (panel.offsetHeight || 132)
@@ -272,8 +274,7 @@ app.registerExtension({
       }
 
       function recalcWidgetHeight() {
-        const currentH = node.size?.[1] || DEFAULT_EDITOR_H;
-        node._widgetHeight = Math.max(300, currentH - 80);
+        node._widgetHeight = DEFAULT_EDITOR_H;
         layoutCanvas();
       }
       function fitNode() {
@@ -1245,6 +1246,7 @@ app.registerExtension({
       setTimeout(() => {
         hideDataWidgets();
         if (node.size[0] < 380) node.setSize([380, node.size[1]]);
+        if (node.size[1] > 1400) node.setSize([node.size[0], DEFAULT_EDITOR_H + 140]);
         syncCanvasToDims();
         rebuildStylePalette();
         renderPanel();
