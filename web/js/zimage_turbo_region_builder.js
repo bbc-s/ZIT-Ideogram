@@ -71,15 +71,16 @@ function injectStyle() {
   const s = document.createElement("style");
   s.id = "kjideo-style";
   s.textContent = `
-    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; }
+    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; min-width:0; }
     .kjideo-canvas { cursor:crosshair; display:block; width:100%; height:auto; flex:0 0 auto; background:#1a1a1a; border-radius:4px; outline:none; }
-    .kjideo-bar { display:flex; align-items:center; gap:6px; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; }
-    .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; }
+    .kjideo-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; min-width:0; }
+    .kjideo-bar span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; min-width:0; }
     .kjideo-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
     .kjideo-btn { background:#333; border:1px solid #555; border-radius:4px; color:#bbb; font:11px sans-serif; cursor:pointer; padding:2px 8px; line-height:16px; white-space:nowrap; flex-shrink:0; }
     .kjideo-btn:hover { border-color:#46b4e6; color:#fff; }
     .kjideo-btn.active { border-color:#46b4e6; color:#46b4e6; background:#2a3a42; }
-    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:vertical; min-height:36px; }
+    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:none; min-height:36px; max-height:96px; overflow:auto; }
     .kjideo-sw { width:20px; height:20px; border:1px solid #666; border-radius:3px; cursor:pointer; flex-shrink:0; position:relative; transition:transform .18s ease, box-shadow .12s ease, opacity .12s ease; }
     .kjideo-sw:hover { transform:scale(1.2); box-shadow:0 0 0 2px #46b4e6; z-index:3; }
     .kjideo-sw.dragging { opacity:.4; box-shadow:0 0 0 2px #46b4e6; }
@@ -147,8 +148,8 @@ app.registerExtension({
       node._bgImg = null;      // optional reference image shown as the canvas background
       node._bgManual = false;  // bg set via "use last result" (not the image input)
       node._lastImported = ""; // last import_json applied to the editor (avoid re-apply)
-      node._areaH = node._areaH || {};      // remembered textarea heights (per field)
-      node._areaObservers = [];             // live ResizeObservers to disconnect on rebuild
+      node._areaH = node._areaH || {};
+      node._areaObservers = [];
 
       // â”€â”€ DOM â”€â”€
       const wrap = document.createElement("div");
@@ -160,17 +161,17 @@ app.registerExtension({
       const copyBtn = document.createElement("button");
       copyBtn.className = "kjideo-btn";
       copyBtn.textContent = "Copy";
-      copyBtn.title = "Copy the current caption JSON to the clipboard";
+      copyBtn.title = "Copy the current Z-Image region JSON to the clipboard";
       const importBtn = document.createElement("button");
       importBtn.className = "kjideo-btn";
       importBtn.textContent = "Paste";
-      importBtn.title = "Parse a caption JSON (clipboard, else paste prompt) and populate the node";
+      importBtn.title = "Paste Z-Image region JSON from the clipboard";
       const clearBtn = document.createElement("button");
       clearBtn.className = "kjideo-btn";
       clearBtn.textContent = "Clear all";
       const tokenSpan = document.createElement("span");
       tokenSpan.style.cssText = "color:#888; white-space:nowrap;";
-      tokenSpan.title = "Rough token estimate (~chars/4). Grey <256, green healthy, orange nearing, red â‰Ą2048 (model cap â€” will error)";
+      tokenSpan.title = "Rough token estimate (~chars/4).";
       const grabBtn = document.createElement("button");
       grabBtn.className = "kjideo-btn";
       grabBtn.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -227,8 +228,8 @@ app.registerExtension({
       // Canvas above panel so the panel grows downward without shifting the canvas.
       wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(canvasEl); wrap.appendChild(panel);
 
-      const TOOLBAR_H = 22;
-      node._widgetHeight = 360;
+      const TOOLBAR_H = 44;
+      node._widgetHeight = 520;
       node.ideoEditor = node.addDOMWidget("zimage_region_editor", "ZImageTurboRegionEditor", wrap, {
         serialize: false, hideOnZoom: false,
         getMinHeight: () => node._widgetHeight,
@@ -250,19 +251,14 @@ app.registerExtension({
 
       // Content height = panel's bottom edge in the wrapper (includes toolbar/canvas/gaps).
       function recalcWidgetHeight() {
-        const contentH = panel.offsetTop + panel.offsetHeight;
-        if (contentH > 0) {
-          node._widgetHeight = contentH + 10;                  // margin pad
-        } else {                                               // not laid out yet â€” estimate
-          const ratio = (hWidget?.value || 1) / (wWidget?.value || 1);
-          node._widgetHeight = Math.round(Math.max(100, node.size[0] - 30) * ratio) + TOOLBAR_H + 70;
-        }
+        const ratio = (hWidget?.value || 1) / (wWidget?.value || 1);
+        const canvasH = Math.max(160, Math.min(360, Math.round(Math.max(260, node.size[0] - 30) * ratio)));
+        node._widgetHeight = canvasH + TOOLBAR_H + 180;
       }
       function fitNode() {
         recalcWidgetHeight();
-        // computeSize (stable min-heights), not last_y which creeps with growable widgets above.
         const minH = node.computeSize()[1];
-        if (node.size[1] < minH) node.setSize([node.size[0], minH]);
+        if (node.size[1] < minH) node.setSize([Math.max(420, node.size[0]), minH]);
       }
 
       // â”€â”€ geometry helpers â”€â”€ (logical CSS px = the displayed canvas size)
@@ -1046,15 +1042,10 @@ app.registerExtension({
         ta.className = "kjideo-area";
         ta.placeholder = placeholder;
         ta.value = value || "";
-        const h = node._areaH[field] || defaultH;
+        const h = defaultH;
         if (h) ta.style.height = h + "px";
         stopProp(ta);
         ta.addEventListener("input", onInput);
-        const ro = new ResizeObserver(() => {
-          if (ta.offsetHeight > 0) { node._areaH[field] = ta.offsetHeight; fitNode(); }
-        });
-        ro.observe(ta);
-        node._areaObservers.push(ro);
         return ta;
       }
       function renderPanel() {

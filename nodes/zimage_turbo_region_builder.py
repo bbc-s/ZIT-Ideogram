@@ -66,6 +66,18 @@ def _encode_zimage(clip, prompt):
     return clip.encode_from_tokens_scheduled(tokens)
 
 
+def _compose_region_prompt(global_prompt, boxes):
+    parts = [(global_prompt or "").strip()]
+    region_parts = []
+    for i, box in enumerate(boxes, start=1):
+        prompt = (box.get("prompt") or box.get("desc") or "").strip()
+        if prompt:
+            region_parts.append(f"region {i}: {prompt}")
+    if region_parts:
+        parts.append("; ".join(region_parts))
+    return "\n".join(p for p in parts if p)
+
+
 def _set_mask(conditioning, mask, strength, set_area_to_bounds=True):
     return node_helpers.conditioning_set_values(
         conditioning,
@@ -196,7 +208,11 @@ serialized region data for workflow save/load.
                 io.Combo.Input("mode", options=["text_to_image", "image_to_image_region_edit"], default="text_to_image"),
                 io.Float.Input("default_region_strength", default=1.0, min=0.0, max=10.0, step=0.01),
                 io.Float.Input("default_feather", default=16.0, min=0.0, max=512.0, step=1.0),
+                io.Combo.Input("conditioning_mode", options=["single_prompt_fast", "regional_conditioning_slow"],
+                               default="single_prompt_fast",
+                               tooltip="single_prompt_fast is recommended for Z-Image-Turbo. regional_conditioning_slow adds one masked conditioning per region and can multiply sampling time."),
                 io.Image.Input("image", optional=True, tooltip="Optional source/reference image shown in the editor and passed through."),
+                io.Vae.Input("vae", optional=True, tooltip="Optional VAE. When provided with an image, the node also outputs an encoded latent with combined_mask as noise_mask for img2img regional edits."),
                 io.String.Input("regions_data", default="", socketless=True, advanced=True),
                 io.Int.Input("bg_brightness", default=35, min=0, max=100, socketless=True, advanced=True),
             ],
@@ -211,6 +227,7 @@ serialized region data for workflow save/load.
                 io.BoundingBox.Output(display_name="bboxes"),
                 io.Int.Output(display_name="width"),
                 io.Int.Output(display_name="height"),
+                io.Latent.Output(display_name="latent_with_noise_mask"),
             ],
         )
 
@@ -225,8 +242,10 @@ serialized region data for workflow save/load.
         mode,
         default_region_strength,
         default_feather,
+        conditioning_mode="single_prompt_fast",
         regions_data="",
         image=None,
+        vae=None,
         bg_brightness=35,
     ) -> io.NodeOutput:
         boxes = [b for b in _parse_json_list(regions_data) if isinstance(b, dict)]
@@ -234,7 +253,7 @@ serialized region data for workflow save/load.
         bbox_dicts = []
         region_records = []
 
-        positive = _encode_zimage(clip, global_prompt)
+        positive = _encode_zimage(clip, _compose_region_prompt(global_prompt, boxes))
         negative = _encode_zimage(clip, global_negative_prompt)
 
         for box in boxes:
@@ -246,9 +265,9 @@ serialized region data for workflow save/load.
             strength = float(box.get("strength", default_region_strength) or default_region_strength)
             prompt = (box.get("prompt") or box.get("desc") or "").strip()
             neg_prompt = (box.get("negative_prompt") or "").strip()
-            if prompt:
+            if conditioning_mode == "regional_conditioning_slow" and prompt:
                 positive += _set_mask(_encode_zimage(clip, prompt), mask.unsqueeze(0), strength)
-            if neg_prompt:
+            if conditioning_mode == "regional_conditioning_slow" and neg_prompt:
                 negative += _set_mask(_encode_zimage(clip, neg_prompt), mask.unsqueeze(0), strength)
             region_records.append(
                 {
@@ -271,6 +290,10 @@ serialized region data for workflow save/load.
         if source_image is None:
             source_image = torch.zeros((1, height, width, 3), dtype=torch.float32)
 
+        latent = {"samples": torch.zeros((1, 16, max(1, height // 8), max(1, width // 8)), dtype=torch.float32)}
+        if image is not None and vae is not None:
+            latent = {"samples": vae.encode(image[:, :, :, :3]), "noise_mask": combined_mask}
+
         bg = None
         if image is not None:
             try:
@@ -282,6 +305,7 @@ serialized region data for workflow save/load.
 
         region_json = {
             "mode": mode,
+            "conditioning_mode": conditioning_mode,
             "global_prompt": global_prompt,
             "global_negative_prompt": global_negative_prompt,
             "regions": region_records,
@@ -298,5 +322,6 @@ serialized region data for workflow save/load.
             bboxes_out,
             width,
             height,
+            latent,
             ui={"dims": [width, height]},
         )
