@@ -71,16 +71,18 @@ function injectStyle() {
   const s = document.createElement("style");
   s.id = "kjideo-style";
   s.textContent = `
-    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; min-width:0; }
+    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; min-width:0; align-items:stretch; }
     .kjideo-canvas { cursor:crosshair; display:block; max-width:100%; width:100%; height:auto; flex:0 0 auto; align-self:center; background:#1a1a1a; border-radius:4px; outline:none; object-fit:contain; }
     .kjideo-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; min-width:0; }
     .kjideo-bar span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .kjideo-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; flex:0 1 auto; min-width:148px; margin-left:auto; }
     .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; min-width:0; }
     .kjideo-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
     .kjideo-btn { background:#333; border:1px solid #555; border-radius:4px; color:#bbb; font:11px sans-serif; cursor:pointer; padding:2px 8px; line-height:16px; white-space:nowrap; flex-shrink:0; }
     .kjideo-btn:hover { border-color:#46b4e6; color:#fff; }
     .kjideo-btn.active { border-color:#46b4e6; color:#46b4e6; background:#2a3a42; }
-    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:none; min-height:36px; max-height:96px; overflow:auto; }
+    .kjideo-label { color:#aaa; font:11px sans-serif; line-height:13px; }
+    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:vertical; min-height:36px; max-height:160px; overflow:auto; }
     .kjideo-sw { width:20px; height:20px; border:1px solid #666; border-radius:3px; cursor:pointer; flex-shrink:0; position:relative; transition:transform .18s ease, box-shadow .12s ease, opacity .12s ease; }
     .kjideo-sw:hover { transform:scale(1.2); box-shadow:0 0 0 2px #46b4e6; z-index:3; }
     .kjideo-sw.dragging { opacity:.4; box-shadow:0 0 0 2px #46b4e6; }
@@ -118,10 +120,12 @@ app.registerExtension({
       const stylePaletteWidget = null;
       const bgBrightnessWidget = findW("bg_brightness");
       if (bgBrightnessWidget && typeof bgBrightnessWidget.value !== "number") bgBrightnessWidget.value = 25;
+      const globalPromptWidget = findW("global_prompt");
+      const globalNegativeWidget = findW("global_negative_prompt");
       const wWidget = findW("width"), hWidget = findW("height");
       // Hide the data widgets while keeping them serializable.
       function hideDataWidgets() {
-        for (const w of [elementsWidget, bgBrightnessWidget]) {
+        for (const w of [elementsWidget, bgBrightnessWidget, globalPromptWidget, globalNegativeWidget]) {
           if (!w) continue;
           w.hidden = true;
           w.computeSize = () => [0, -4];
@@ -150,6 +154,8 @@ app.registerExtension({
       node._lastImported = ""; // last import_json applied to the editor (avoid re-apply)
       node._areaH = node._areaH || {};
       node._areaObservers = [];
+      node._globalAreaH = node._globalAreaH || {};
+      node._globalAreaObservers = [];
 
       // â”€â”€ DOM â”€â”€
       const wrap = document.createElement("div");
@@ -202,7 +208,10 @@ app.registerExtension({
       bgSlider.style.cssText = "width:64px;flex:0 0 auto;";
       stopProp(bgSlider);
       bgSlider.addEventListener("input", () => { if (bgBrightnessWidget) bgBrightnessWidget.value = parseInt(bgSlider.value, 10); drawCanvas(); });
-      bar.appendChild(hint); bar.appendChild(liveLabel); bar.appendChild(grabBtn); bar.appendChild(bgSlider); bar.appendChild(tokenSpan); bar.appendChild(copyBtn); bar.appendChild(importBtn); bar.appendChild(clearBtn);
+      const actions = document.createElement("div");
+      actions.className = "kjideo-actions";
+      actions.append(liveLabel, grabBtn, bgSlider, tokenSpan, copyBtn, importBtn, clearBtn);
+      bar.append(hint, actions);
       updateGrabBtn();
 
       // Persistent global style-palette row
@@ -222,11 +231,14 @@ app.registerExtension({
       addWheelPassthrough(wrap);
       addMiddleClickPan(canvasEl);
 
+      const globalPanel = document.createElement("div");
+      globalPanel.className = "kjideo-panel";
+
       const panel = document.createElement("div");
       panel.className = "kjideo-panel";
 
       // Canvas above panel so the panel grows downward without shifting the canvas.
-      wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(canvasEl); wrap.appendChild(panel);
+      wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(globalPanel); wrap.appendChild(canvasEl); wrap.appendChild(panel);
 
       const TOOLBAR_H = 44;
       const MIN_EDITOR_H = 420;
@@ -259,6 +271,7 @@ app.registerExtension({
         const widgetH = Math.min(MAX_EDITOR_H, Math.max(MIN_EDITOR_H, node.size?.[1] || DEFAULT_EDITOR_H));
         const reservedH = (bar.offsetHeight || TOOLBAR_H)
           + (styleBar.offsetHeight || 0)
+          + (globalPanel.offsetHeight || 96)
           + (panel.offsetHeight || 132)
           + 30;
         const maxCanvasW = Math.max(120, nodeW - 30);
@@ -271,6 +284,8 @@ app.registerExtension({
         }
         canvasEl.style.width = `${Math.round(displayW)}px`;
         canvasEl.style.height = `${Math.round(displayH)}px`;
+        canvasEl.style.marginLeft = "auto";
+        canvasEl.style.marginRight = "auto";
       }
 
       function recalcWidgetHeight() {
@@ -434,6 +449,18 @@ app.registerExtension({
           _draw();
         });
       }
+      function imageSize(img) {
+        return {
+          w: img?.naturalWidth || img?.videoWidth || img?.width || 1,
+          h: img?.naturalHeight || img?.videoHeight || img?.height || 1,
+        };
+      }
+      function drawImageContain(img, x, y, w, h) {
+        const s = imageSize(img);
+        const scale = Math.min(w / s.w, h / s.h);
+        const dw = s.w * scale, dh = s.h * scale;
+        ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+      }
       function _draw() {
         // Size the backing store to display Ă— DPR and draw in logical px (crisp text/lines).
         const W = logW(), H = logH(), d = window.devicePixelRatio || 1;
@@ -444,7 +471,8 @@ app.registerExtension({
         let bri = bgBrightnessWidget ? bgBrightnessWidget.value : 25;
         if (typeof bri !== "number" || isNaN(bri)) bri = 25;       // guard against unset widget value
         if (node._bgImg) {                                         // reference image, dimmed by brightness
-          ctx.drawImage(node._bgImg, 0, 0, W, H);
+          ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, W, H);
+          drawImageContain(node._bgImg, 0, 0, W, H);
           const dim = 1 - bri / 100;
           if (dim > 0) { ctx.fillStyle = `rgba(0,0,0,${dim})`; ctx.fillRect(0, 0, W, H); }
         } else {                                                   // blank canvas grey from brightness
@@ -899,6 +927,12 @@ app.registerExtension({
         const w = findW(name);
         return w ? w.value : "";
       }
+      function setW(name, value) {
+        const w = findW(name);
+        if (!w) return;
+        w.value = value || "";
+        w.callback?.(w.value);
+      }
       function buildCaption() { return JSON.stringify(buildZImageRegionPayload(), null, 2); }
       function updateTokens() {
         const txt = (getW("global_prompt") || "") + " " + node._boxes.map((b) => b.prompt || b.desc || "").join(" ");
@@ -917,6 +951,8 @@ app.registerExtension({
       }
       function loadCaption(cap) {
         closeInlineEditor();
+        if (typeof cap.global_prompt === "string") setW("global_prompt", cap.global_prompt);
+        if (typeof cap.global_negative_prompt === "string") setW("global_negative_prompt", cap.global_negative_prompt);
         const W = wWidget?.value || 1024, H = hWidget?.value || 1024;
         node._boxes = (cap.regions || []).map((b, i) => {
           const bb = b.bbox && typeof b.bbox === "object" ? b.bbox : null;
@@ -934,7 +970,7 @@ app.registerExtension({
           };
         });
         node._activeIdx = node._boxes.length ? 0 : -1;
-        syncCanvasToDims(); commit(); fitNode();
+        syncCanvasToDims(); renderGlobalPanel(); commit(); fitNode();
       }
       async function doCopy() {
         const txt = buildCaption();
@@ -1064,16 +1100,43 @@ app.registerExtension({
       }
 
       // Textarea whose user-dragged height persists across panel rebuilds / box switches.
-      function makeArea(field, value, placeholder, onInput, defaultH) {
+      function makeArea(field, value, placeholder, onInput, defaultH, heightStore = node._areaH, observers = node._areaObservers) {
         const ta = document.createElement("textarea");
         ta.className = "kjideo-area";
         ta.placeholder = placeholder;
         ta.value = value || "";
-        const h = defaultH;
+        const h = heightStore[field] || defaultH;
         if (h) ta.style.height = h + "px";
         stopProp(ta);
         ta.addEventListener("input", onInput);
+        if (window.ResizeObserver) {
+          const ro = new ResizeObserver(() => {
+            const px = Math.round(ta.getBoundingClientRect().height);
+            if (px > 0) heightStore[field] = px;
+            scheduleFit();
+          });
+          ro.observe(ta);
+          observers.push(ro);
+        }
         return ta;
+      }
+      function addAreaLabel(container, text) {
+        const label = document.createElement("div");
+        label.className = "kjideo-label";
+        label.textContent = text;
+        container.appendChild(label);
+      }
+      function renderGlobalPanel() {
+        for (const ro of node._globalAreaObservers) ro.disconnect();
+        node._globalAreaObservers = [];
+        globalPanel.innerHTML = "";
+        addAreaLabel(globalPanel, "positive prompt");
+        globalPanel.appendChild(makeArea("global_prompt", getW("global_prompt"), "global positive prompt",
+          function () { setW("global_prompt", this.value); updateTokens(); drawCanvas(); }, 64, node._globalAreaH, node._globalAreaObservers));
+        addAreaLabel(globalPanel, "negative prompt");
+        globalPanel.appendChild(makeArea("global_negative_prompt", getW("global_negative_prompt"), "global negative prompt",
+          function () { setW("global_negative_prompt", this.value); updateTokens(); }, 48, node._globalAreaH, node._globalAreaObservers));
+        scheduleFit();
       }
       function renderPanel() {
         for (const ro of node._areaObservers) ro.disconnect();
@@ -1092,8 +1155,10 @@ app.registerExtension({
         const col = REGION_COLORS[node._activeIdx % REGION_COLORS.length];
         hint.innerHTML = `<b style="color:${col}">region ${node._activeIdx + 1}</b> · dbl-click edit · alt-click overlap · del remove`;
 
+        addAreaLabel(panel, "region prompt");
         panel.appendChild(makeArea("prompt", b.prompt || b.desc || "", "region prompt",
           function () { b.prompt = this.value; b.desc = this.value; touch(); }, 92));
+        addAreaLabel(panel, "region negative prompt");
         panel.appendChild(makeArea("negative_prompt", b.negative_prompt || "", "optional region negative prompt",
           function () { b.negative_prompt = this.value; touch(); }, 56));
 
@@ -1130,7 +1195,7 @@ app.registerExtension({
       // Update the token estimate when the caption-level text widgets change.
       for (const name of ["global_prompt", "global_negative_prompt"]) {
         const w = findW(name);
-        if (w) chainCallback(w, "callback", () => updateTokens());
+        if (w) chainCallback(w, "callback", () => { updateTokens(); });
       }
 
       // â”€â”€ keep canvas + getMinHeight in sync while the node is resized â”€â”€
@@ -1236,6 +1301,7 @@ app.registerExtension({
         if (bgBrightnessWidget) bgSlider.value = bgBrightnessWidget.value;
         syncCanvasToDims();
         rebuildStylePalette();
+        renderGlobalPanel();
         renderPanel();
         drawCanvas();
         updateTokens();
