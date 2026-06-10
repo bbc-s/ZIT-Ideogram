@@ -872,14 +872,14 @@ app.registerExtension({
           })),
         };
       }
-      buildCaption = function () { return JSON.stringify(buildZImageRegionPayload(), null, 2); };
-      updateTokens = function () {
+      function buildCaption() { return JSON.stringify(buildZImageRegionPayload(), null, 2); }
+      function updateTokens() {
         const txt = (getW("global_prompt") || "") + " " + node._boxes.map((b) => b.prompt || b.desc || "").join(" ");
         const n = Math.ceil(txt.length / 4);
         tokenSpan.textContent = "~" + n + " tok";
         tokenSpan.style.color = n >= 2048 ? "#e05555" : n >= 1792 ? "#e6a23c" : n >= 256 ? "#6cc06c" : "#888";
-      };
-      tryParseCaption = function (t) {
+      }
+      function tryParseCaption(t) {
         if (!t) return null;
         try {
           const o = JSON.parse(t);
@@ -887,8 +887,8 @@ app.registerExtension({
           if (o && typeof o === "object" && Array.isArray(o.regions)) return o;
         } catch (e) {}
         return null;
-      };
-      loadCaption = function (cap) {
+      }
+      function loadCaption(cap) {
         closeInlineEditor();
         const W = wWidget?.value || 1024, H = hWidget?.value || 1024;
         node._boxes = (cap.regions || []).map((b, i) => {
@@ -908,7 +908,7 @@ app.registerExtension({
         });
         node._activeIdx = node._boxes.length ? 0 : -1;
         syncCanvasToDims(); commit(); fitNode();
-      };
+      }
       async function doCopy() {
         const txt = buildCaption();
         try {
