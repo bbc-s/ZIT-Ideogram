@@ -203,7 +203,6 @@ serialized region data for workflow save/load.
                 io.Clip.Input("clip"),
                 io.Int.Input("width", default=1024, min=64, max=16384, step=16),
                 io.Int.Input("height", default=1024, min=64, max=16384, step=16),
-                io.Int.Input("batch_size", default=1, min=1, max=4096),
                 io.String.Input("global_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.String.Input("global_negative_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.Combo.Input("mode", options=["text_to_image", "image_to_image_region_edit"], default="text_to_image"),
@@ -216,6 +215,8 @@ serialized region data for workflow save/load.
                 io.Vae.Input("vae", optional=True, tooltip="Optional VAE. When provided with an image, the node also outputs an encoded latent with combined_mask as noise_mask for img2img regional edits."),
                 io.String.Input("regions_data", default="", socketless=True, advanced=True),
                 io.Int.Input("bg_brightness", default=35, min=0, max=100, socketless=True, advanced=True),
+                io.Int.Input("batch_size", default=1, min=1, max=4096,
+                             tooltip="Batch size for the latent_with_noise_mask output. Kept at the end for workflow compatibility."),
             ],
             outputs=[
                 io.Conditioning.Output(display_name="positive"),
@@ -238,7 +239,6 @@ serialized region data for workflow save/load.
         clip,
         width,
         height,
-        batch_size,
         global_prompt,
         global_negative_prompt,
         mode,
@@ -249,6 +249,7 @@ serialized region data for workflow save/load.
         image=None,
         vae=None,
         bg_brightness=35,
+        batch_size=1,
     ) -> io.NodeOutput:
         boxes = [b for b in _parse_json_list(regions_data) if isinstance(b, dict)]
         masks = []
