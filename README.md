@@ -1,5 +1,11 @@
 # ZIT-Ideogram
 
+<p align="center">
+  <strong style="color:red; font-size:1.35em;">HEAVY BETA TESTING NODE WITH LOTS OF BUGS</strong>
+</p>
+
+> **Warning:** This project is experimental, unstable, and actively changing. Expect broken workflows, UI issues, poor Z-Image-Turbo regional adherence, performance regressions, and compatibility bugs.
+
 ComfyUI custom node that reuses the KJNodes Ideogram 4 visual box editor pattern for Z-Image-Turbo regional prompting.
 
 ## Node
