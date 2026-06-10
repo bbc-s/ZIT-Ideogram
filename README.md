@@ -29,7 +29,7 @@ Use ComfyUI's built-in Z-Image-Turbo workflow as the base graph, then replace th
 
 1. Connect Z-Image/Qwen `CLIP` to `clip`.
 2. Connect `positive` and `negative` to the sampler.
-3. For text-to-image, connect `width` and `height` to your latent/image size nodes.
+3. For text-to-image, connect `latent_with_noise_mask` to the sampler latent input, or connect `width`, `height`, and `batch_size` to your own latent/image size nodes.
 4. For image-to-image regional editing, connect a source image to `image`, use `combined_mask` as the inpaint/noise mask, and sample at a denoise/strength suitable for the edit.
 5. Draw boxes in the editor and set each region prompt, optional region negative prompt, strength, and feather.
 
@@ -44,7 +44,7 @@ Z-Image-Turbo does not natively consume Ideogram-style bounding-box caption JSON
 - `single_prompt_fast`: recommended default. Region prompts are folded into one Z-Image prompt and masks are output separately. This keeps sampling speed close to a normal Z-Image workflow.
 - `regional_conditioning_slow`: emits one masked conditioning per region. This can multiply sampler work by the number of regions and may not improve Z-Image-Turbo adherence.
 
-For image-to-image edits, connect `vae` and use `latent_with_noise_mask` as the sampler latent. This is the closest native ComfyUI path for "only change the selected area". Preservation still depends on Z-Image-Turbo, denoise, mask feather, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
+For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise_mask` as the sampler latent. The node's `batch_size` repeats a single source latent/mask when you want multiple variations. This is the closest native ComfyUI path for "only change the selected area". Preservation still depends on Z-Image-Turbo, denoise, mask feather, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
 
 ## Examples
 

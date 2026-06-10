@@ -203,6 +203,7 @@ serialized region data for workflow save/load.
                 io.Clip.Input("clip"),
                 io.Int.Input("width", default=1024, min=64, max=16384, step=16),
                 io.Int.Input("height", default=1024, min=64, max=16384, step=16),
+                io.Int.Input("batch_size", default=1, min=1, max=4096),
                 io.String.Input("global_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.String.Input("global_negative_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.Combo.Input("mode", options=["text_to_image", "image_to_image_region_edit"], default="text_to_image"),
@@ -237,6 +238,7 @@ serialized region data for workflow save/load.
         clip,
         width,
         height,
+        batch_size,
         global_prompt,
         global_negative_prompt,
         mode,
@@ -290,9 +292,18 @@ serialized region data for workflow save/load.
         if source_image is None:
             source_image = torch.zeros((1, height, width, 3), dtype=torch.float32)
 
-        latent = {"samples": torch.zeros((1, 16, max(1, height // 8), max(1, width // 8)), dtype=torch.float32)}
+        batch_size = max(1, int(batch_size))
+        latent = {"samples": torch.zeros((batch_size, 16, max(1, height // 8), max(1, width // 8)), dtype=torch.float32)}
         if image is not None and vae is not None:
-            latent = {"samples": vae.encode(image[:, :, :, :3]), "noise_mask": combined_mask}
+            samples = vae.encode(image[:, :, :, :3])
+            if samples.shape[0] == 1 and batch_size > 1:
+                samples = samples.repeat((batch_size,) + (1,) * (samples.ndim - 1))
+            elif samples.shape[0] != batch_size:
+                batch_size = samples.shape[0]
+            noise_mask = combined_mask
+            if noise_mask.shape[0] == 1 and batch_size > 1:
+                noise_mask = noise_mask.repeat((batch_size,) + (1,) * (noise_mask.ndim - 1))
+            latent = {"samples": samples, "noise_mask": noise_mask}
 
         bg = None
         if image is not None:

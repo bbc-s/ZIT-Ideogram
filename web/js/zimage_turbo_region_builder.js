@@ -252,13 +252,20 @@ app.registerExtension({
       // Content height = panel's bottom edge in the wrapper (includes toolbar/canvas/gaps).
       function recalcWidgetHeight() {
         const ratio = (hWidget?.value || 1) / (wWidget?.value || 1);
-        const canvasH = Math.max(160, Math.min(360, Math.round(Math.max(260, node.size[0] - 30) * ratio)));
-        node._widgetHeight = canvasH + TOOLBAR_H + 180;
+        const estimatedCanvasH = Math.max(160, Math.round(Math.max(260, node.size[0] - 30) * ratio));
+        const measuredH = panel.offsetTop + panel.offsetHeight;
+        node._widgetHeight = Math.max(360, Math.ceil((measuredH || (estimatedCanvasH + TOOLBAR_H + 180)) + 14));
       }
       function fitNode() {
         recalcWidgetHeight();
         const minH = node.computeSize()[1];
-        if (node.size[1] < minH) node.setSize([Math.max(420, node.size[0]), minH]);
+        if (node.size[1] < minH) node.setSize([node.size[0], minH]);
+      }
+      function scheduleFit() {
+        requestAnimationFrame(() => {
+          fitNode();
+          drawCanvas();
+        });
       }
 
       // â”€â”€ geometry helpers â”€â”€ (logical CSS px = the displayed canvas size)
@@ -1059,7 +1066,7 @@ app.registerExtension({
           p.style.color = "#888";
           p.textContent = node._boxes.length ? "Click a region to edit it." : "No regions yet.";
           panel.appendChild(p);
-          requestAnimationFrame(fitNode);
+          scheduleFit();
           return;
         }
         const col = REGION_COLORS[node._activeIdx % REGION_COLORS.length];
@@ -1092,13 +1099,13 @@ app.registerExtension({
         addNumber("feather", "feather", 16.0, 0.0, 512.0, 1.0);
         panel.appendChild(numRow);
 
-        requestAnimationFrame(fitNode);
+        scheduleFit();
       }
 
       // â”€â”€ width/height widget callbacks â”€â”€
       for (const w of [wWidget, hWidget]) {
         if (!w) continue;
-        chainCallback(w, "callback", () => { syncCanvasToDims(); drawCanvas(); fitNode(); });
+        chainCallback(w, "callback", () => { syncCanvasToDims(); drawCanvas(); scheduleFit(); });
       }
       // Update the token estimate when the caption-level text widgets change.
       for (const name of ["global_prompt", "global_negative_prompt"]) {
@@ -1111,12 +1118,8 @@ app.registerExtension({
       chainCallback(node, "onResize", function () {
         if (_resizing) return;
         _resizing = true;
-        recalcWidgetHeight();
-        // Resize clamp reads computeSize() before getMinHeight refreshes; re-grow with fresh min.
-        const minH = node.computeSize()[1];
-        if (node.size[1] < minH) node.size[1] = minH;
-        drawCanvas();
-        _resizing = false;
+        scheduleFit();
+        requestAnimationFrame(() => { _resizing = false; });
       });
 
       // Optional reference image as the canvas background (matches ImageTransformKJ).
@@ -1128,7 +1131,7 @@ app.registerExtension({
           const r16 = (v) => Math.max(16, Math.round(v / 16) * 16);   // model needs multiples of 16
           if (wWidget) wWidget.value = r16(img.naturalWidth);          // match canvas aspect to the image
           if (hWidget) hWidget.value = r16(img.naturalHeight);
-          syncCanvasToDims(); drawCanvas(); fitNode(); updateGrabBtn();
+          syncCanvasToDims(); drawCanvas(); scheduleFit(); updateGrabBtn();
         };
         img.src = src;
       }
@@ -1216,7 +1219,7 @@ app.registerExtension({
         renderPanel();
         drawCanvas();
         updateTokens();
-        requestAnimationFrame(fitNode);
+        scheduleFit();
       });
 
       // initial layout (deferred so size/last_y are settled)
