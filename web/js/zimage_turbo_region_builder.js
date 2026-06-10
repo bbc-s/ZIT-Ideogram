@@ -1,9 +1,9 @@
-﻿import { chainCallback, addMiddleClickPan, addWheelPassthrough, cursorForBboxMode, watchImageInputs, captureVideoFrame } from './utility.js';
+import { chainCallback, addMiddleClickPan, addWheelPassthrough, cursorForBboxMode, watchImageInputs, captureVideoFrame } from './utility.js';
 const { app } = window.comfyAPI.app;
 
 const HANDLE = 8;            // hit radius (canvas px) for corners/edges
-const REGION_COLORS = ["#46b4e6", "#e6a23c", "#6cc06c", "#d86d84", "#a98cff"];
-const MAX_STYLE_COLORS = 16;
+const MAX_ELEM_COLORS = 5;   // Ideogram 4 per-element palette cap
+const MAX_STYLE_COLORS = 16; // Ideogram 4 style palette cap
 let copiedBox = null;        // internal clipboard for copy/paste of regions (shared across nodes)
 
 // Track the most recent generated image so it can be grabbed as a background.
@@ -71,18 +71,15 @@ function injectStyle() {
   const s = document.createElement("style");
   s.id = "kjideo-style";
   s.textContent = `
-    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; min-width:0; align-items:stretch; }
-    .kjideo-canvas { cursor:crosshair; display:block; max-width:100%; width:100%; height:auto; flex:0 0 auto; align-self:center; background:#1a1a1a; border-radius:4px; outline:none; object-fit:contain; }
-    .kjideo-bar { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; min-width:0; }
-    .kjideo-bar span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
-    .kjideo-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; flex-wrap:wrap; flex:0 1 auto; min-width:148px; margin-left:auto; }
-    .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; min-width:0; }
+    .kjideo-wrap { display:flex; flex-direction:column; overflow:hidden; position:relative; pointer-events:auto; gap:4px; }
+    .kjideo-canvas { cursor:crosshair; display:block; width:100%; height:auto; flex:0 0 auto; background:#1a1a1a; border-radius:4px; outline:none; }
+    .kjideo-bar { display:flex; align-items:center; gap:6px; font:11px sans-serif; color:#aaa; user-select:none; padding:0 2px; flex:0 0 auto; }
+    .kjideo-panel { display:flex; flex-direction:column; gap:5px; padding:6px; background:#262626; border-radius:4px; font:11px sans-serif; color:#bbb; flex:0 0 auto; }
     .kjideo-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
     .kjideo-btn { background:#333; border:1px solid #555; border-radius:4px; color:#bbb; font:11px sans-serif; cursor:pointer; padding:2px 8px; line-height:16px; white-space:nowrap; flex-shrink:0; }
     .kjideo-btn:hover { border-color:#46b4e6; color:#fff; }
     .kjideo-btn.active { border-color:#46b4e6; color:#46b4e6; background:#2a3a42; }
-    .kjideo-label { color:#aaa; font:11px sans-serif; line-height:13px; }
-    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:vertical; min-height:36px; max-height:160px; overflow:auto; }
+    .kjideo-area { width:100%; box-sizing:border-box; background:#1d1d1d; border:1px solid #444; border-radius:4px; color:#ddd; font:13px monospace; padding:4px 6px; resize:vertical; min-height:36px; }
     .kjideo-sw { width:20px; height:20px; border:1px solid #666; border-radius:3px; cursor:pointer; flex-shrink:0; position:relative; transition:transform .18s ease, box-shadow .12s ease, opacity .12s ease; }
     .kjideo-sw:hover { transform:scale(1.2); box-shadow:0 0 0 2px #46b4e6; z-index:3; }
     .kjideo-sw.dragging { opacity:.4; box-shadow:0 0 0 2px #46b4e6; }
@@ -120,12 +117,10 @@ app.registerExtension({
       const stylePaletteWidget = null;
       const bgBrightnessWidget = findW("bg_brightness");
       if (bgBrightnessWidget && typeof bgBrightnessWidget.value !== "number") bgBrightnessWidget.value = 25;
-      const globalPromptWidget = findW("global_prompt");
-      const globalNegativeWidget = findW("global_negative_prompt");
       const wWidget = findW("width"), hWidget = findW("height");
       // Hide the data widgets while keeping them serializable.
       function hideDataWidgets() {
-        for (const w of [elementsWidget, bgBrightnessWidget, globalPromptWidget, globalNegativeWidget]) {
+        for (const w of [elementsWidget, stylePaletteWidget, bgBrightnessWidget]) {
           if (!w) continue;
           w.hidden = true;
           w.computeSize = () => [0, -4];
@@ -147,17 +142,15 @@ app.registerExtension({
       node._boxAtStart = null; // active box snapshot at drag start
       node._hoverTitle = null; // index of the title chip under the cursor
       node._hoverBox = null;   // index of the box under the cursor
-      node._focused = false;   // editor (DOM) focused â€” gates the active-box highlight
+      node._focused = false;   // editor (DOM) focused — gates the active-box highlight
       node._selected = false;  // node selected in the graph
       node._bgImg = null;      // optional reference image shown as the canvas background
       node._bgManual = false;  // bg set via "use last result" (not the image input)
       node._lastImported = ""; // last import_json applied to the editor (avoid re-apply)
-      node._areaH = node._areaH || {};
-      node._areaObservers = [];
-      node._globalAreaH = node._globalAreaH || {};
-      node._globalAreaObservers = [];
+      node._areaH = node._areaH || {};      // remembered textarea heights (per field)
+      node._areaObservers = [];             // live ResizeObservers to disconnect on rebuild
 
-      // â”€â”€ DOM â”€â”€
+      // ── DOM ──
       const wrap = document.createElement("div");
       wrap.className = "kjideo-wrap";
       const bar = document.createElement("div");
@@ -171,13 +164,13 @@ app.registerExtension({
       const importBtn = document.createElement("button");
       importBtn.className = "kjideo-btn";
       importBtn.textContent = "Paste";
-      importBtn.title = "Paste Z-Image region JSON from the clipboard";
+      importBtn.title = "Parse Z-Image region JSON (clipboard, else paste prompt) and populate the node";
       const clearBtn = document.createElement("button");
       clearBtn.className = "kjideo-btn";
       clearBtn.textContent = "Clear all";
       const tokenSpan = document.createElement("span");
       tokenSpan.style.cssText = "color:#888; white-space:nowrap;";
-      tokenSpan.title = "Rough token estimate (~chars/4).";
+      tokenSpan.title = "Rough token estimate (~chars/4). Grey <256, green healthy, orange nearing, red ≥2048 (model cap — will error)";
       const grabBtn = document.createElement("button");
       grabBtn.className = "kjideo-btn";
       grabBtn.addEventListener("mousedown", (e) => e.stopPropagation());
@@ -208,10 +201,7 @@ app.registerExtension({
       bgSlider.style.cssText = "width:64px;flex:0 0 auto;";
       stopProp(bgSlider);
       bgSlider.addEventListener("input", () => { if (bgBrightnessWidget) bgBrightnessWidget.value = parseInt(bgSlider.value, 10); drawCanvas(); });
-      const actions = document.createElement("div");
-      actions.className = "kjideo-actions";
-      actions.append(liveLabel, grabBtn, bgSlider, tokenSpan, copyBtn, importBtn, clearBtn);
-      bar.append(hint, actions);
+      bar.appendChild(hint); bar.appendChild(liveLabel); bar.appendChild(grabBtn); bar.appendChild(bgSlider); bar.appendChild(tokenSpan); bar.appendChild(copyBtn); bar.appendChild(importBtn); bar.appendChild(clearBtn);
       updateGrabBtn();
 
       // Persistent global style-palette row
@@ -225,38 +215,31 @@ app.registerExtension({
       const canvasEl = document.createElement("canvas");
       canvasEl.className = "kjideo-canvas";
       canvasEl.tabIndex = 0;                                  // focusable, so it can receive key events
-      canvasEl.title = "Drag to draw Â· click to select Â· alt-click overlap Â· dbl-click edit Â· " +
-        "right-click region list Â· Del remove Â· Ctrl/Cmd+C/V/D copy/paste/duplicate";
+      canvasEl.title = "Drag to draw · click to select · alt-click overlap · dbl-click edit · " +
+        "right-click region list · Del remove · Ctrl/Cmd+C/V/D copy/paste/duplicate";
       const ctx = canvasEl.getContext("2d");
       addWheelPassthrough(wrap);
       addMiddleClickPan(canvasEl);
-
-      const globalPanel = document.createElement("div");
-      globalPanel.className = "kjideo-panel";
 
       const panel = document.createElement("div");
       panel.className = "kjideo-panel";
 
       // Canvas above panel so the panel grows downward without shifting the canvas.
-      wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(globalPanel); wrap.appendChild(canvasEl); wrap.appendChild(panel);
+      wrap.appendChild(bar); wrap.appendChild(styleBar); wrap.appendChild(canvasEl); wrap.appendChild(panel);
 
-      const TOOLBAR_H = 44;
-      const MIN_EDITOR_H = 420;
-      const DEFAULT_EDITOR_H = 520;
-      const MAX_EDITOR_H = 720;
-      node._widgetHeight = DEFAULT_EDITOR_H;
-      node.ideoEditor = node.addDOMWidget("zimage_region_editor", "ZImageTurboRegionEditor", wrap, {
+      const TOOLBAR_H = 22;
+      node._widgetHeight = 360;
+      node.ideoEditor = node.addDOMWidget("ideo_editor", "Ideogram4Editor", wrap, {
         serialize: false, hideOnZoom: false,
         getMinHeight: () => node._widgetHeight,
       });
       node.resizable = true;
 
-      // â”€â”€ canvas sizing â”€â”€
-      // The display size is capped by the current node height. Tall images shrink into
-      // the editor instead of forcing the node to grow vertically.
+      // ── canvas sizing ──
+      // The display size is CSS-driven (width:100% + aspect-ratio); the backing store
+      // is sized to display × devicePixelRatio in prepCanvas() so text/lines stay crisp.
       function setCanvasSize(w, h) {
         canvasEl.style.aspectRatio = `${w} / ${h}`;          // display shape only
-        layoutCanvas(w, h);
         if (node.graph) node.graph.setDirtyCanvas(true, true);
       }
       function syncCanvasToDims() {
@@ -265,45 +248,24 @@ app.registerExtension({
         drawCanvas();
       }
 
-      function layoutCanvas(w = wWidget?.value || 1024, h = hWidget?.value || 1024) {
-        const ratio = Math.max(1, h) / Math.max(1, w);
-        const nodeW = Math.max(260, node.size?.[0] || 420);
-        const widgetH = Math.min(MAX_EDITOR_H, Math.max(MIN_EDITOR_H, node.size?.[1] || DEFAULT_EDITOR_H));
-        const reservedH = (bar.offsetHeight || TOOLBAR_H)
-          + (styleBar.offsetHeight || 0)
-          + (globalPanel.offsetHeight || 96)
-          + (panel.offsetHeight || 132)
-          + 30;
-        const maxCanvasW = Math.max(120, nodeW - 30);
-        const maxCanvasH = Math.max(120, widgetH - reservedH);
-        let displayW = maxCanvasW;
-        let displayH = Math.round(displayW * ratio);
-        if (displayH > maxCanvasH) {
-          displayH = maxCanvasH;
-          displayW = Math.max(80, Math.round(displayH / ratio));
-        }
-        canvasEl.style.width = `${Math.round(displayW)}px`;
-        canvasEl.style.height = `${Math.round(displayH)}px`;
-        canvasEl.style.marginLeft = "auto";
-        canvasEl.style.marginRight = "auto";
-      }
-
+      // Content height = panel's bottom edge in the wrapper (includes toolbar/canvas/gaps).
       function recalcWidgetHeight() {
-        node._widgetHeight = DEFAULT_EDITOR_H;
-        layoutCanvas();
+        const contentH = panel.offsetTop + panel.offsetHeight;
+        if (contentH > 0) {
+          node._widgetHeight = contentH + 10;                  // margin pad
+        } else {                                               // not laid out yet — estimate
+          const ratio = (hWidget?.value || 1) / (wWidget?.value || 1);
+          node._widgetHeight = Math.round(Math.max(100, node.size[0] - 30) * ratio) + TOOLBAR_H + 70;
+        }
       }
       function fitNode() {
         recalcWidgetHeight();
-        if (node.graph) node.graph.setDirtyCanvas(true, true);
-      }
-      function scheduleFit() {
-        requestAnimationFrame(() => {
-          fitNode();
-          drawCanvas();
-        });
+        // computeSize (stable min-heights), not last_y which creeps with growable widgets above.
+        const minH = node.computeSize()[1];
+        if (node.size[1] < minH) node.setSize([node.size[0], minH]);
       }
 
-      // â”€â”€ geometry helpers â”€â”€ (logical CSS px = the displayed canvas size)
+      // ── geometry helpers ── (logical CSS px = the displayed canvas size)
       function logW() { return canvasEl.offsetWidth || 1; }
       function logH() { return canvasEl.offsetHeight || 1; }
       function toPx(b) {
@@ -341,7 +303,7 @@ app.registerExtension({
       }
 
       // All boxes under the point, top-first to match draw order: the active box is
-      // drawn last (on top), then the rest by index lowâ†’high (index 0 = front).
+      // drawn last (on top), then the rest by index low→high (index 0 = front).
       function boxesAt(mN) {
         const rx = HANDLE / logW(), ry = HANDLE / logH();
         const res = [];
@@ -439,7 +401,7 @@ app.registerExtension({
         return mode === "move" ? { ...start, x, y } : normalizeBox({ ...start, x, y, w, h });
       }
 
-      // â”€â”€ drawing â”€â”€
+      // ── drawing ──
       let _rafPending = false;
       function drawCanvas() {
         if (_rafPending) return;
@@ -449,20 +411,8 @@ app.registerExtension({
           _draw();
         });
       }
-      function imageSize(img) {
-        return {
-          w: img?.naturalWidth || img?.videoWidth || img?.width || 1,
-          h: img?.naturalHeight || img?.videoHeight || img?.height || 1,
-        };
-      }
-      function drawImageContain(img, x, y, w, h) {
-        const s = imageSize(img);
-        const scale = Math.min(w / s.w, h / s.h);
-        const dw = s.w * scale, dh = s.h * scale;
-        ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
-      }
       function _draw() {
-        // Size the backing store to display Ă— DPR and draw in logical px (crisp text/lines).
+        // Size the backing store to display × DPR and draw in logical px (crisp text/lines).
         const W = logW(), H = logH(), d = window.devicePixelRatio || 1;
         const bw = Math.round(W * d), bh = Math.round(H * d);
         if (canvasEl.width !== bw || canvasEl.height !== bh) { canvasEl.width = bw; canvasEl.height = bh; }
@@ -471,8 +421,7 @@ app.registerExtension({
         let bri = bgBrightnessWidget ? bgBrightnessWidget.value : 25;
         if (typeof bri !== "number" || isNaN(bri)) bri = 25;       // guard against unset widget value
         if (node._bgImg) {                                         // reference image, dimmed by brightness
-          ctx.fillStyle = "#1a1a1a"; ctx.fillRect(0, 0, W, H);
-          drawImageContain(node._bgImg, 0, 0, W, H);
+          ctx.drawImage(node._bgImg, 0, 0, W, H);
           const dim = 1 - bri / 100;
           if (dim > 0) { ctx.fillStyle = `rgba(0,0,0,${dim})`; ctx.fillRect(0, 0, W, H); }
         } else {                                                   // blank canvas grey from brightness
@@ -487,7 +436,8 @@ app.registerExtension({
         const tagR = tagRects();                              // collision-avoided tag positions
         for (const i of order) {
           const b = node._boxes[i], active = i === aIdx;
-          const col = REGION_COLORS[i % REGION_COLORS.length];
+          const pal = (b.palette || []).filter(Boolean);
+          const col = pal.length ? pal[0] : "#8c8c8c";       // box color = first palette color, else neutral grey
           const { x1, y1, x2, y2 } = toPx(b);
           const w = x2 - x1, h = y2 - y1;
           const hovered = i === node._hoverBox || active;    // active box stays highlighted (on top)
@@ -501,11 +451,21 @@ app.registerExtension({
           const lw = active ? 2 : (hovered ? 1.5 : 1);
           ctx.strokeStyle = col; ctx.lineWidth = lw;
           ctx.strokeRect(x1 + lw / 2, y1 + lw / 2, w - lw, h - lw);  // inside the box so strip/badge align at y1
-          ctx.setLineDash([]);          // in-box content (clipped to the box): prompt text, tag chip on top
+          ctx.setLineDash([]);
+          if (pal.length) {                                  // palette shown as a strip along the top edge
+            const sw = w / pal.length, n = pal.length, sh = 7;
+            for (let p = 0; p < n; p++) {
+              const sx = x1 + Math.round(p * sw);
+              ctx.fillStyle = pal[p];
+              ctx.fillRect(sx, y1, x1 + Math.round((p + 1) * sw) - sx, sh);
+            }
+          }
+          // in-box content (clipped to the box): prompt text, tag chip on top
           ctx.save();
           ctx.beginPath(); ctx.rect(x1, y1, w, h); ctx.clip();
 
-          let body = b.prompt || b.desc || "";
+          let body = b.desc || "";
+          if (b.type === "text" && b.text) body = `"${b.text}"` + (body ? " — " + body : "");
           if (body) {
             ctx.font = "12px monospace";
             ctx.fillStyle = readableText(col);              // box color, lightened if too dark
@@ -532,7 +492,7 @@ app.registerExtension({
         }
       }
 
-      // â”€â”€ serialization â”€â”€
+      // ── serialization ──
       function serialize() {
         if (elementsWidget) elementsWidget.value = node._boxes.length ? JSON.stringify(node._boxes) : "";
         if (stylePaletteWidget) stylePaletteWidget.value = node._stylePalette.length ? JSON.stringify(node._stylePalette) : "";
@@ -548,7 +508,7 @@ app.registerExtension({
         else if (i <= node._activeIdx) node._activeIdx = Math.max(0, node._activeIdx - 1);
       }
 
-      // â”€â”€ pointer interaction â”€â”€
+      // ── pointer interaction ──
       canvasEl.addEventListener("mousedown", (e) => {
         if (node._placing) {             // drop the duplicate being placed
           if (e.button === 0) { placeFollower(mouseN(e)); finishPlacing(); }
@@ -567,7 +527,7 @@ app.registerExtension({
           node._boxAtStart = { ...node._boxes[hit.index] };
         } else {
           node._dragMode = "draw";
-          const nb = { x: mN.x, y: mN.y, w: 0, h: 0, prompt: "", negative_prompt: "", strength: 1.0, feather: 16.0 };
+          const nb = { x: mN.x, y: mN.y, w: 0, h: 0, type: "obj", text: "", desc: "", palette: [] };
           node._boxes.push(nb);
           node._activeIdx = node._boxes.length - 1;
           node._boxAtStart = { ...nb };
@@ -598,7 +558,7 @@ app.registerExtension({
         }
       });
 
-      // â”€â”€ inline description editing (double-click a region) â”€â”€
+      // ── inline description editing (double-click a region) ──
       let inlineTa = null;
       function closeInlineEditor() {
         if (inlineTa) { inlineTa.remove(); inlineTa = null; }
@@ -617,26 +577,26 @@ app.registerExtension({
         const top = Math.max(oy, Math.min(oy + b.y * dh, oy + dh - h));
         const ta = document.createElement("textarea");
         ta.className = "kjideo-inline";
-        ta.value = b.prompt || b.desc || "";
+        ta.value = b.desc || "";
         ta.style.left = left + "px";
         ta.style.top = top + "px";
         ta.style.width = w + "px";
         ta.style.height = h + "px";
-        ta.style.borderColor = REGION_COLORS[idx % REGION_COLORS.length];
+        ta.style.borderColor = (b.palette || []).find(Boolean) || "#46b4e6";  // first palette color, else accent
         stopProp(ta);
         wrap.appendChild(ta);
         inlineTa = ta;
         ta.focus(); ta.select();
-        const orig = b.prompt || b.desc || "";
+        const orig = b.desc || "";
         let cancelled = false;
-        ta.addEventListener("input", () => { b.prompt = ta.value; b.desc = ta.value; drawCanvas(); updateTokens(); });
+        ta.addEventListener("input", () => { b.desc = ta.value; drawCanvas(); updateTokens(); });
         ta.addEventListener("keydown", (e) => {
           e.stopPropagation();
-          if (e.key === "Escape") { cancelled = true; b.prompt = orig; b.desc = orig; ta.blur(); }
+          if (e.key === "Escape") { cancelled = true; b.desc = orig; ta.blur(); }
           else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ta.blur();
         });
         ta.addEventListener("blur", () => {
-          if (!cancelled) { b.prompt = ta.value; b.desc = ta.value; }
+          if (!cancelled) b.desc = ta.value;
           closeInlineEditor();
           commit();
         });
@@ -706,7 +666,7 @@ app.registerExtension({
         commit();
       }
 
-      // â”€â”€ duplicate placement: the new box follows the cursor until clicked â”€â”€
+      // ── duplicate placement: the new box follows the cursor until clicked ──
       function placeFollower(mN) {
         const b = node._boxes[node._activeIdx];
         if (!b) return;
@@ -741,7 +701,7 @@ app.registerExtension({
         commit(); fitNode();
       }
 
-      // â”€â”€ right-click "layers" menu: list / select / delete / duplicate / reorder regions â”€â”€
+      // ── right-click "layers" menu: list / select / delete / duplicate / reorder regions ──
       function closeLayersMenu() {
         if (node._layerMenu) { node._layerMenu.remove(); node._layerMenu = null; }
         if (node._layerMenuDismiss) {
@@ -753,7 +713,7 @@ app.registerExtension({
       function rowLabel(b) {
         if (b.type === "text") {
           const t = b.text ? `"${b.text}"` : "";
-          return b.desc ? (t ? t + " â€” " + b.desc : b.desc) : t;
+          return b.desc ? (t ? t + " — " + b.desc : b.desc) : t;
         }
         return b.desc || "";
       }
@@ -763,7 +723,7 @@ app.registerExtension({
         menu.className = "kjideo-menu";
         const hdr = document.createElement("div");
         hdr.className = "kjideo-mhdr";
-        hdr.textContent = "Regions â€” top = front Â· click select Â· drag reorder";
+        hdr.textContent = "Regions — top = front · click select · drag reorder";
         // 01 at the top of the list = front-most (drawn on top); see _draw / boxesAt.
         menu.appendChild(hdr);
         const list = document.createElement("div");
@@ -796,10 +756,10 @@ app.registerExtension({
             txt.textContent = label || (b.type === "text" ? "(text)" : "(empty)");
             txt.title = label;
             const dup = document.createElement("button");
-            dup.className = "kjideo-lbtn"; dup.textContent = "â§‰";
+            dup.className = "kjideo-lbtn"; dup.textContent = "⧉";
             dup.title = "Duplicate, then click on the canvas to place";
             const del = document.createElement("button");
-            del.className = "kjideo-lbtn del"; del.textContent = "âś•";
+            del.className = "kjideo-lbtn del"; del.textContent = "✕";
             del.title = "Delete region";
             row.append(sw, num, txt, dup, del);
             list.appendChild(row);
@@ -906,9 +866,34 @@ app.registerExtension({
         commit(); rebuildStylePalette(); fitNode();
       });
 
-      // Z-Image overrides for the copied KJ editor import/export path.
-      function buildZImageRegionPayload() {
-        return {
+      // ── build caption JSON (mirrors Python key order) ──
+      // pyJson: matches Python _dumps — indent=4, but scalar arrays stay on one line.
+      function pyJson(v, lvl = 0) {
+        if (v === null) return "null";
+        if (typeof v === "number" || typeof v === "boolean") return String(v);
+        if (typeof v === "string") return JSON.stringify(v);
+        const pad = "    ".repeat(lvl + 1), end = "    ".repeat(lvl);
+        if (Array.isArray(v)) {
+          if (!v.length) return "[]";
+          if (v.every((x) => x === null || typeof x !== "object"))   // scalar array → inline
+            return "[" + v.map((x) => pyJson(x, lvl)).join(", ") + "]";
+          return "[\n" + v.map((x) => pad + pyJson(x, lvl + 1)).join(",\n") + "\n" + end + "]";
+        }
+        const keys = Object.keys(v);
+        if (!keys.length) return "{}";
+        return "{\n" + keys.map((k) => pad + JSON.stringify(k) + ": " + pyJson(v[k], lvl + 1)).join(",\n") + "\n" + end + "}";
+      }
+      function getW(name) { const w = findW(name); return w ? w.value : ""; }
+      function cleanPalette(arr) { return (arr || []).filter((c) => c).map((c) => c.toUpperCase()); }
+      function normBboxJS(b) {
+        const c = (v) => Math.max(0, Math.min(1000, Math.round(v * 1000)));
+        let ymin = c(b.y), xmin = c(b.x), ymax = c(b.y + b.h), xmax = c(b.x + b.w);
+        if (ymin > ymax) [ymin, ymax] = [ymax, ymin];
+        if (xmin > xmax) [xmin, xmax] = [xmax, xmin];
+        return [ymin, xmin, ymax, xmax];
+      }
+      function buildCaption() {
+        return JSON.stringify({
           global_prompt: getW("global_prompt") || "",
           global_negative_prompt: getW("global_negative_prompt") || "",
           regions: node._boxes.map((b) => ({
@@ -920,91 +905,99 @@ app.registerExtension({
             negative_prompt: b.negative_prompt || "",
             strength: Number.isFinite(Number(b.strength)) ? Number(b.strength) : 1.0,
             feather: Number.isFinite(Number(b.feather)) ? Number(b.feather) : 16.0,
+            desc: b.prompt || b.desc || "",
           })),
-        };
+        }, null, 2);
       }
-      function getW(name) {
-        const w = findW(name);
-        return w ? w.value : "";
-      }
-      function setW(name, value) {
-        const w = findW(name);
-        if (!w) return;
-        w.value = value || "";
-        w.callback?.(w.value);
-      }
-      function buildCaption() { return JSON.stringify(buildZImageRegionPayload(), null, 2); }
+      // Rough token estimate (~chars/4); exact count needs the Qwen tokenizer.
       function updateTokens() {
-        const txt = (getW("global_prompt") || "") + " " + node._boxes.map((b) => b.prompt || b.desc || "").join(" ");
-        const n = Math.ceil(txt.length / 4);
+        const n = Math.ceil(buildCaption().length / 4);
         tokenSpan.textContent = "~" + n + " tok";
+        // grey <256 (sparse) · green healthy · orange nearing · red ≥2048 (model hard cap)
         tokenSpan.style.color = n >= 2048 ? "#e05555" : n >= 1792 ? "#e6a23c" : n >= 256 ? "#6cc06c" : "#888";
+      }
+      async function doCopy() {
+        const txt = buildCaption();
+        try { await navigator.clipboard.writeText(txt); copyBtn.textContent = "Copied"; setTimeout(() => (copyBtn.textContent = "Copy"), 900); }
+        catch (e) { window.prompt("Copy the Z-Image region JSON:", txt); }
+      }
+      stopProp(copyBtn);
+      copyBtn.addEventListener("click", doCopy);
+
+      // ── import a caption JSON and populate the node ──
+      function setWidgetVal(name, val) {
+        const w = findW(name);
+        if (w) { w.value = val; w.callback?.(val); }
+      }
+      function bboxElemToBox(el, idx) {
+        if (!el || typeof el !== "object") return null;
+        const box = { type: "obj",
+          text: "", desc: el.prompt || el.desc || "", prompt: el.prompt || el.desc || "",
+          negative_prompt: el.negative_prompt || el.negative || "",
+          strength: Number.isFinite(Number(el.strength)) ? Number(el.strength) : 1.0,
+          feather: Number.isFinite(Number(el.feather)) ? Number(el.feather) : 16.0,
+          palette: [] };
+        const bb = el.bbox;
+        if (Number.isFinite(Number(el.x)) && Number.isFinite(Number(el.w))) {
+          box.x = Number(el.x); box.y = Number(el.y || 0); box.w = Number(el.w); box.h = Number(el.h || 0);
+        } else if (Array.isArray(bb) && bb.length === 4) {
+          const [ymin, xmin, ymax, xmax] = bb;
+          box.x = xmin / 1000; box.y = ymin / 1000; box.w = (xmax - xmin) / 1000; box.h = (ymax - ymin) / 1000;
+        } else {
+          // No bbox: "unplaced" element — small placeholder, flagged so export omits bbox.
+          const k = (idx || 0) % 6;
+          box.x = 0.03 + k * 0.035; box.y = 0.03 + k * 0.035; box.w = 0.22; box.h = 0.14;
+          box.nobbox = true;
+        }
+        return box;
+      }
+      function applyCaption(cap) {
+        const cd = (cap && cap.compositional_deconstruction) || {};
+        const els = Array.isArray(cap?.regions) ? cap.regions : (Array.isArray(cap) ? cap : (Array.isArray(cd.elements) ? cd.elements : []));
+        node._boxes = els.map((el, i) => bboxElemToBox(el, i)).filter(Boolean);
+        node._activeIdx = node._boxes.length ? 0 : -1;
+        if (typeof cap?.global_prompt === "string") setWidgetVal("global_prompt", cap.global_prompt);
+        if (typeof cap?.global_negative_prompt === "string") setWidgetVal("global_negative_prompt", cap.global_negative_prompt);
+        node._stylePalette = [];
       }
       function tryParseCaption(t) {
         if (!t) return null;
         try {
           const o = JSON.parse(t);
-          if (Array.isArray(o)) return { regions: o };
-          if (o && typeof o === "object" && Array.isArray(o.regions)) return o;
-        } catch (e) {}
-        return null;
+          if (Array.isArray(o)) return o;
+          return (o && typeof o === "object" && (Array.isArray(o.regions) || o.compositional_deconstruction)) ? o : null;
+        }
+        catch (e) { return null; }
       }
+      // Apply a parsed caption to the editor and refresh everything.
       function loadCaption(cap) {
         closeInlineEditor();
-        if (typeof cap.global_prompt === "string") setW("global_prompt", cap.global_prompt);
-        if (typeof cap.global_negative_prompt === "string") setW("global_negative_prompt", cap.global_negative_prompt);
-        const W = wWidget?.value || 1024, H = hWidget?.value || 1024;
-        node._boxes = (cap.regions || []).map((b, i) => {
-          const bb = b.bbox && typeof b.bbox === "object" ? b.bbox : null;
-          const x = Number.isFinite(Number(b.x)) ? Number(b.x) : (bb ? Number(bb.x || 0) / W : 0.05 + (i % 6) * 0.035);
-          const y = Number.isFinite(Number(b.y)) ? Number(b.y) : (bb ? Number(bb.y || 0) / H : 0.05 + (i % 6) * 0.035);
-          const w = Number.isFinite(Number(b.w)) ? Number(b.w) : (bb ? Number(bb.width || 0) / W : 0.24);
-          const h = Number.isFinite(Number(b.h)) ? Number(b.h) : (bb ? Number(bb.height || 0) / H : 0.16);
-          return {
-            x: clamp01(x), y: clamp01(y), w: Math.max(0, Math.min(1, w)), h: Math.max(0, Math.min(1, h)),
-            prompt: b.prompt || b.desc || "",
-            desc: b.prompt || b.desc || "",
-            negative_prompt: b.negative_prompt || b.negative || "",
-            strength: Number.isFinite(Number(b.strength)) ? Number(b.strength) : 1.0,
-            feather: Number.isFinite(Number(b.feather)) ? Number(b.feather) : 16.0,
-          };
-        });
-        node._activeIdx = node._boxes.length ? 0 : -1;
-        syncCanvasToDims(); renderGlobalPanel(); commit(); fitNode();
+        applyCaption(cap);
+        syncCanvasToDims(); commit(); rebuildStylePalette(); fitNode();
       }
-      async function doCopy() {
-        const txt = buildCaption();
-        try {
-          await navigator.clipboard.writeText(txt);
-          copyBtn.textContent = "Copied";
-          setTimeout(() => (copyBtn.textContent = "Copy"), 900);
-        } catch (e) {
-          window.prompt("Copy the Z-Image region JSON:", txt);
-        }
-      }
-      stopProp(copyBtn);
-      copyBtn.addEventListener("click", doCopy);
-
       async function doImport() {
         let cap = null, txt = "";
-        try {
-          txt = (await navigator.clipboard.readText() || "").trim();
-          cap = tryParseCaption(txt);
-        } catch (e) {}
-        if (!cap) {
-          txt = (window.prompt("Paste Z-Image region JSON:", "") || "").trim();
-          cap = tryParseCaption(txt);
-        }
-        if (!cap) {
-          if (txt) alert("Not valid Z-Image region JSON. Expected { regions: [...] } or an array of regions.");
-          return;
-        }
+        try { txt = (await navigator.clipboard.readText() || "").trim(); cap = tryParseCaption(txt); } catch (e) {}
+        if (!cap) { txt = (window.prompt("Paste Z-Image region JSON:", "") || "").trim(); cap = tryParseCaption(txt); }
+        if (!cap) { if (txt) alert("Not valid Z-Image region JSON."); return; }
         loadCaption(cap);
       }
       stopProp(importBtn);
       importBtn.addEventListener("click", doImport);
 
+      // Populate the editor from a caption pushed back by execute() when import_json
+      // is connected (a connected socket can't be read in the frontend directly).
+      function applyImported(capStr) {
+        if (!capStr || capStr === node._lastImported) return;
+        const cap = tryParseCaption(capStr);
+        if (!cap) return;
+        node._lastImported = capStr;
+        loadCaption(cap);
+      }
       chainCallback(node, "onExecuted", function (message) {
+        if (message?.caption) applyImported(message.caption[0]);
+        // Reflect resolved width/height (e.g. from connected inputs) in the canvas aspect.
+        // A connected background image governs the aspect itself, so skip then.
         if (message?.dims && !node._bgImg) {
           const [w, h] = message.dims;
           if (wWidget && w) wWidget.value = w;
@@ -1012,7 +1005,8 @@ app.registerExtension({
           syncCanvasToDims(); fitNode();
         }
       });
-      // property panel
+
+      // ── property panel ──
       function stopProp(el) {
         for (const ev of ["mousedown", "pointerdown", "wheel"]) el.addEventListener(ev, (e) => e.stopPropagation());
       }
@@ -1024,7 +1018,7 @@ app.registerExtension({
           sw.className = "kjideo-sw";
           sw.style.background = hex;
           sw.dataset.hex = hex;
-          sw.title = "Click edit Â· drag reorder Â· right-click remove";
+          sw.title = "Click edit · drag reorder · right-click remove";
           const inp = document.createElement("input");
           inp.type = "color"; inp.value = hex;
           sw.appendChild(inp);
@@ -1073,7 +1067,7 @@ app.registerExtension({
                 if (order.length === arr.length) { arr.length = 0; arr.push(...order); }
                 onStruct();
               } else {
-                inp.click();                                 // no drag â†’ treat as click, open the picker
+                inp.click();                                 // no drag → treat as click, open the picker
               }
             };
             document.addEventListener("mousemove", move);
@@ -1100,43 +1094,21 @@ app.registerExtension({
       }
 
       // Textarea whose user-dragged height persists across panel rebuilds / box switches.
-      function makeArea(field, value, placeholder, onInput, defaultH, heightStore = node._areaH, observers = node._areaObservers) {
+      function makeArea(field, value, placeholder, onInput, defaultH) {
         const ta = document.createElement("textarea");
         ta.className = "kjideo-area";
         ta.placeholder = placeholder;
         ta.value = value || "";
-        const h = heightStore[field] || defaultH;
+        const h = node._areaH[field] || defaultH;
         if (h) ta.style.height = h + "px";
         stopProp(ta);
         ta.addEventListener("input", onInput);
-        if (window.ResizeObserver) {
-          const ro = new ResizeObserver(() => {
-            const px = Math.round(ta.getBoundingClientRect().height);
-            if (px > 0) heightStore[field] = px;
-            scheduleFit();
-          });
-          ro.observe(ta);
-          observers.push(ro);
-        }
+        const ro = new ResizeObserver(() => {
+          if (ta.offsetHeight > 0) { node._areaH[field] = ta.offsetHeight; fitNode(); }
+        });
+        ro.observe(ta);
+        node._areaObservers.push(ro);
         return ta;
-      }
-      function addAreaLabel(container, text) {
-        const label = document.createElement("div");
-        label.className = "kjideo-label";
-        label.textContent = text;
-        container.appendChild(label);
-      }
-      function renderGlobalPanel() {
-        for (const ro of node._globalAreaObservers) ro.disconnect();
-        node._globalAreaObservers = [];
-        globalPanel.innerHTML = "";
-        addAreaLabel(globalPanel, "positive prompt");
-        globalPanel.appendChild(makeArea("global_prompt", getW("global_prompt"), "global positive prompt",
-          function () { setW("global_prompt", this.value); updateTokens(); drawCanvas(); }, 64, node._globalAreaH, node._globalAreaObservers));
-        addAreaLabel(globalPanel, "negative prompt");
-        globalPanel.appendChild(makeArea("global_negative_prompt", getW("global_negative_prompt"), "global negative prompt",
-          function () { setW("global_negative_prompt", this.value); updateTokens(); }, 48, node._globalAreaH, node._globalAreaObservers));
-        scheduleFit();
       }
       function renderPanel() {
         for (const ro of node._areaObservers) ro.disconnect();
@@ -1149,62 +1121,69 @@ app.registerExtension({
           p.style.color = "#888";
           p.textContent = node._boxes.length ? "Click a region to edit it." : "No regions yet.";
           panel.appendChild(p);
-          scheduleFit();
+          requestAnimationFrame(fitNode);
           return;
         }
-        const col = REGION_COLORS[node._activeIdx % REGION_COLORS.length];
+        const col = (b.palette || []).find(Boolean) || "#bbb";
         hint.innerHTML = `<b style="color:${col}">region ${node._activeIdx + 1}</b> · dbl-click edit · alt-click overlap · del remove`;
 
-        addAreaLabel(panel, "region prompt");
-        panel.appendChild(makeArea("prompt", b.prompt || b.desc || "", "region prompt",
-          function () { b.prompt = this.value; b.desc = this.value; touch(); }, 92));
-        addAreaLabel(panel, "region negative prompt");
-        panel.appendChild(makeArea("negative_prompt", b.negative_prompt || "", "optional region negative prompt",
-          function () { b.negative_prompt = this.value; touch(); }, 56));
-
-        const numRow = document.createElement("div");
-        numRow.className = "kjideo-row";
-        function addNumber(label, field, fallback, min, max, step) {
-          const span = document.createElement("span");
-          span.textContent = label + ":";
-          const input = document.createElement("input");
-          input.type = "number";
-          input.min = String(min); input.max = String(max); input.step = String(step);
-          input.value = Number.isFinite(Number(b[field])) ? Number(b[field]) : fallback;
-          input.style.cssText = "width:68px;background:#1d1d1d;border:1px solid #444;border-radius:4px;color:#ddd;font:12px monospace;padding:2px 4px;";
-          stopProp(input);
-          input.addEventListener("input", () => {
-            const v = Number(input.value);
-            b[field] = Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : fallback;
-            touch();
-          });
-          numRow.append(span, input);
+        // type toggle
+        const typeRow = document.createElement("div");
+        typeRow.className = "kjideo-row";
+        const lbl = document.createElement("span"); lbl.textContent = "type:"; typeRow.appendChild(lbl);
+        for (const t of ["obj", "text"]) {
+          const btn = document.createElement("button");
+          btn.className = "kjideo-btn" + (b.type === t ? " active" : "");
+          btn.textContent = t;
+          stopProp(btn);
+          btn.addEventListener("click", () => { b.type = t; commit(); });
+          typeRow.appendChild(btn);
         }
-        addNumber("strength", "strength", 1.0, 0.0, 10.0, 0.01);
-        addNumber("feather", "feather", 16.0, 0.0, 512.0, 1.0);
-        panel.appendChild(numRow);
+        panel.appendChild(typeRow);
 
-        scheduleFit();
+        // text (only for text type)
+        if (b.type === "text") {
+          panel.appendChild(makeArea("text", b.text, "text to render (verbatim)",
+            function () { b.text = this.value; touch(); }));
+        }
+
+        // desc — default ~3x the single-line min height
+        panel.appendChild(makeArea("desc", b.desc, "prompt for this region",
+          function () { b.desc = this.value; b.prompt = this.value; touch(); }, 110));
+
+        // palette
+        const palRow = document.createElement("div");
+        palRow.className = "kjideo-row";
+        const pl = document.createElement("span"); pl.textContent = "colors:"; palRow.appendChild(pl);
+        b.palette = b.palette || [];
+        buildSwatchRow(palRow, b.palette, MAX_ELEM_COLORS, swatchEdit, commit);
+        panel.appendChild(palRow);
+
+        requestAnimationFrame(fitNode);
       }
 
-      // â”€â”€ width/height widget callbacks â”€â”€
+      // ── width/height widget callbacks ──
       for (const w of [wWidget, hWidget]) {
         if (!w) continue;
-        chainCallback(w, "callback", () => { syncCanvasToDims(); drawCanvas(); scheduleFit(); });
+        chainCallback(w, "callback", () => { syncCanvasToDims(); drawCanvas(); fitNode(); });
       }
       // Update the token estimate when the caption-level text widgets change.
       for (const name of ["global_prompt", "global_negative_prompt"]) {
         const w = findW(name);
-        if (w) chainCallback(w, "callback", () => { updateTokens(); });
+        if (w) chainCallback(w, "callback", () => updateTokens());
       }
 
-      // â”€â”€ keep canvas + getMinHeight in sync while the node is resized â”€â”€
+      // ── keep canvas + getMinHeight in sync while the node is resized ──
       let _resizing = false;
       chainCallback(node, "onResize", function () {
         if (_resizing) return;
         _resizing = true;
-        scheduleFit();
-        requestAnimationFrame(() => { _resizing = false; });
+        recalcWidgetHeight();
+        // Resize clamp reads computeSize() before getMinHeight refreshes; re-grow with fresh min.
+        const minH = node.computeSize()[1];
+        if (node.size[1] < minH) node.size[1] = minH;
+        drawCanvas();
+        _resizing = false;
       });
 
       // Optional reference image as the canvas background (matches ImageTransformKJ).
@@ -1216,7 +1195,7 @@ app.registerExtension({
           const r16 = (v) => Math.max(16, Math.round(v / 16) * 16);   // model needs multiples of 16
           if (wWidget) wWidget.value = r16(img.naturalWidth);          // match canvas aspect to the image
           if (hWidget) hWidget.value = r16(img.naturalHeight);
-          syncCanvasToDims(); drawCanvas(); scheduleFit(); updateGrabBtn();
+          syncCanvasToDims(); drawCanvas(); fitNode(); updateGrabBtn();
         };
         img.src = src;
       }
@@ -1229,7 +1208,7 @@ app.registerExtension({
       });
       // "Grab BG" button: use the last generated image as the background, or clear it.
       node._grabResultBg = () => {
-        if (!lastResultImage) { alert("No sampling result yet â€” run a generation first."); return; }
+        if (!lastResultImage) { alert("No sampling result yet — run a generation first."); return; }
         node._bgManual = true;
         loadBg(resultViewUrl(lastResultImage));
       };
@@ -1268,7 +1247,7 @@ app.registerExtension({
         node._areaObservers = [];
       });
 
-      // â”€â”€ restore on load â”€â”€
+      // ── restore on load ──
       function _parseBoxes(s) {
         try {
           const p = JSON.parse(s);
@@ -1278,13 +1257,13 @@ app.registerExtension({
       }
       // Persist editor data by name (robust to widget-order changes across versions).
       chainCallback(node, "onSerialize", function (o) {
-        if (o) o.zit_regions = { boxes: node._boxes };
+        if (o) o.ideo = { boxes: node._boxes, palette: node._stylePalette };
       });
       chainCallback(node, "onConfigure", function (o) {
         const raw = o && Array.isArray(o.widgets_values) ? o.widgets_values : [];
-        // Recover regions: name-keyed blob â†’ named widget â†’ raw saved values (survives
-        // any widget reorder/remap across versions) â†’ live widgets.
-        let boxes = (o && o.zit_regions && Array.isArray(o.zit_regions.boxes)) ? o.zit_regions.boxes : _parseBoxes(elementsWidget?.value || "");
+        // Recover regions: name-keyed blob → named widget → raw saved values (survives
+        // any widget reorder/remap across versions) → live widgets.
+        let boxes = (o && o.ideo && Array.isArray(o.ideo.boxes)) ? o.ideo.boxes : _parseBoxes(elementsWidget?.value || "");
         if (!boxes) { for (const v of raw) { const b = _parseBoxes(v); if (b) { boxes = b; break; } } }
         if (!boxes) { for (const w of node.widgets || []) { const b = _parseBoxes(w?.value); if (b) { boxes = b; break; } } }
         if (boxes) {
@@ -1301,18 +1280,16 @@ app.registerExtension({
         if (bgBrightnessWidget) bgSlider.value = bgBrightnessWidget.value;
         syncCanvasToDims();
         rebuildStylePalette();
-        renderGlobalPanel();
         renderPanel();
         drawCanvas();
         updateTokens();
-        scheduleFit();
+        requestAnimationFrame(fitNode);
       });
 
       // initial layout (deferred so size/last_y are settled)
       setTimeout(() => {
         hideDataWidgets();
         if (node.size[0] < 380) node.setSize([380, node.size[1]]);
-        if (node.size[1] > 1400) node.setSize([node.size[0], DEFAULT_EDITOR_H + 140]);
         syncCanvasToDims();
         rebuildStylePalette();
         renderPanel();
@@ -1323,13 +1300,3 @@ app.registerExtension({
     });
   },
 });
-
-
-
-
-
-
-
-
-
-
