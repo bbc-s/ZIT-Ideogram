@@ -872,6 +872,10 @@ app.registerExtension({
           })),
         };
       }
+      function getW(name) {
+        const w = findW(name);
+        return w ? w.value : "";
+      }
       function buildCaption() { return JSON.stringify(buildZImageRegionPayload(), null, 2); }
       function updateTokens() {
         const txt = (getW("global_prompt") || "") + " " + node._boxes.map((b) => b.prompt || b.desc || "").join(" ");
