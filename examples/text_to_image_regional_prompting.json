@@ -1,0 +1,36 @@
+{
+  "global_prompt": "wide cinematic illustration, clean composition, natural lighting",
+  "global_negative_prompt": "low quality, blurry, distorted anatomy, text artifacts",
+  "regions": [
+    {
+      "x": 0.04,
+      "y": 0.12,
+      "w": 0.28,
+      "h": 0.72,
+      "prompt": "left side: tall glass greenhouse filled with tropical plants",
+      "negative_prompt": "empty room, plain wall",
+      "strength": 1.0,
+      "feather": 24
+    },
+    {
+      "x": 0.36,
+      "y": 0.18,
+      "w": 0.28,
+      "h": 0.62,
+      "prompt": "center: wooden table with ceramic tea set and warm steam",
+      "negative_prompt": "plastic, clutter",
+      "strength": 1.0,
+      "feather": 18
+    },
+    {
+      "x": 0.68,
+      "y": 0.1,
+      "w": 0.28,
+      "h": 0.76,
+      "prompt": "right side: arched window overlooking a rainy city skyline",
+      "negative_prompt": "blank window, overexposed",
+      "strength": 1.0,
+      "feather": 24
+    }
+  ]
+}

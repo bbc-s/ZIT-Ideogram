@@ -1,0 +1,16 @@
+{
+  "global_prompt": "preserve the original portrait, face, expression, body, clothes, background, lighting, and composition",
+  "global_negative_prompt": "changed face, changed clothing, changed background, extra people, low quality",
+  "regions": [
+    {
+      "x": 0.33,
+      "y": 0.08,
+      "w": 0.34,
+      "h": 0.38,
+      "prompt": "long red curly hair, natural strands, realistic volume",
+      "negative_prompt": "hat, wig edge, changed face, dyed skin",
+      "strength": 0.85,
+      "feather": 32
+    }
+  ]
+}
