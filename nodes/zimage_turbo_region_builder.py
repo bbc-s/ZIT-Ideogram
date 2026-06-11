@@ -82,11 +82,16 @@ def _compose_region_prompt(global_prompt, boxes):
     parts = [(global_prompt or "").strip()]
     region_parts = []
     for i, box in enumerate(boxes, start=1):
-        prompt = (box.get("prompt") or box.get("desc") or "").strip()
+        prompt = (box.get("desc") or box.get("prompt") or "").strip()
         if prompt:
-            region_parts.append(f"region {i}: {prompt}")
+            x, y, w, h = _norm_box(box)
+            cx = x + w / 2
+            cy = y + h / 2
+            horiz = "left" if cx < 0.34 else "right" if cx > 0.66 else "center"
+            vert = "upper" if cy < 0.34 else "lower" if cy > 0.66 else "middle"
+            region_parts.append(f"region {i} ({vert} {horiz} area): {prompt}")
     if region_parts:
-        parts.append("; ".join(region_parts))
+        parts.append("Regional positive instructions. Apply these details in their specified image areas: " + "; ".join(region_parts))
     return "\n".join(p for p in parts if p)
 
 
@@ -218,11 +223,13 @@ serialized region data for workflow save/load.
                 io.String.Input("global_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.String.Input("global_negative_prompt", multiline=True, default="", dynamic_prompts=True),
                 io.Combo.Input("mode", options=["text_to_image", "image_to_image_region_edit"], default="text_to_image"),
-                io.Float.Input("default_region_strength", default=1.0, min=0.0, max=10.0, step=0.01),
-                io.Float.Input("default_feather", default=16.0, min=0.0, max=512.0, step=1.0),
+                io.Float.Input("default_region_strength", default=1.0, min=0.0, max=10.0, step=0.01,
+                               tooltip="Default mask strength for regions. In single_prompt_fast this affects mask/noise_mask outputs, not text prompt strength. For img2img edits keep near 1.0 and control change with KSampler denoise."),
+                io.Float.Input("default_feather", default=16.0, min=0.0, max=512.0, step=1.0,
+                               tooltip="Default mask feather in pixels. 0 = hard rectangle edge, 8-24 = normal soft edge, 32+ = very soft transition."),
                 io.Combo.Input("conditioning_mode", options=["single_prompt_fast", "regional_conditioning_slow"],
                                default="single_prompt_fast",
-                               tooltip="single_prompt_fast is recommended for Z-Image-Turbo. regional_conditioning_slow adds one masked conditioning per region and can multiply sampling time."),
+                               tooltip="Recommended: single_prompt_fast. regional_conditioning_slow is experimental for Z-Image-Turbo, often slower and less reliable because ZIT is not designed for masked multi-conditioning."),
                 io.Image.Input("image", optional=True, tooltip="Optional source/reference image shown in the editor and passed through."),
                 io.Vae.Input("vae", optional=True, tooltip="Optional VAE. When provided with an image, the node also outputs an encoded latent with combined_mask as noise_mask for img2img regional edits."),
                 io.String.Input("regions_data", default="", socketless=True, advanced=True),
@@ -284,7 +291,7 @@ serialized region data for workflow save/load.
             masks.append(mask)
             bbox_dicts.append(bbox)
             strength = float(box.get("strength", default_region_strength) or default_region_strength)
-            prompt = (box.get("prompt") or box.get("desc") or "").strip()
+            prompt = (box.get("desc") or box.get("prompt") or "").strip()
             neg_prompt = (box.get("negative_prompt") or "").strip()
             if conditioning_mode == "regional_conditioning_slow" and prompt:
                 positive += _set_mask(_encode_zimage(clip, prompt), mask.unsqueeze(0), strength)
@@ -338,6 +345,7 @@ serialized region data for workflow save/load.
             "conditioning_mode": conditioning_mode,
             "global_prompt": global_prompt,
             "global_negative_prompt": global_negative_prompt,
+            "composed_positive_prompt": _compose_region_prompt(global_prompt, boxes),
             "regions": region_records,
         }
 

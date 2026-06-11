@@ -901,11 +901,11 @@ app.registerExtension({
             y: b.y || 0,
             w: b.w || 0,
             h: b.h || 0,
-            prompt: b.prompt || b.desc || "",
+            prompt: b.desc || b.prompt || "",
             negative_prompt: b.negative_prompt || "",
             strength: Number.isFinite(Number(b.strength)) ? Number(b.strength) : 1.0,
             feather: Number.isFinite(Number(b.feather)) ? Number(b.feather) : 16.0,
-            desc: b.prompt || b.desc || "",
+            desc: b.desc || b.prompt || "",
           })),
         }, null, 2);
       }

@@ -46,9 +46,15 @@ Z-Image-Turbo does not natively consume Ideogram-style bounding-box caption JSON
 `conditioning_mode`:
 
 - `single_prompt_fast`: recommended default. Region prompts are folded into one Z-Image prompt and masks are output separately. This keeps sampling speed close to a normal Z-Image workflow.
-- `regional_conditioning_slow`: emits one masked conditioning per region. This can multiply sampler work by the number of regions and may not improve Z-Image-Turbo adherence.
+- `regional_conditioning_slow`: experimental for Z-Image-Turbo. It emits one masked conditioning per region, can multiply sampler work by the number of regions, and often does not improve adherence because ZIT is not designed like Ideogram's API regional editor.
 
-For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise_mask` as the sampler latent. The node's `batch_size` repeats a single source latent/mask when you want multiple variations. This is the closest native ComfyUI path for "only change the selected area". Preservation still depends on Z-Image-Turbo, denoise, mask feather, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
+For text-to-image, region text is treated as additional positive prompt text with a rough area hint. Z-Image-Turbo may still ignore the rectangle or move the concept because it does not natively support hard regional prompt boxes.
+
+For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise_mask` as the sampler latent. The node's `batch_size` repeats a single source latent/mask when you want multiple variations. In testing, KSampler denoise around `0.6` to `0.8` is usually the practical range for visible regional changes while preserving the rest of the image. This is the closest native ComfyUI path for "only change the selected area". Preservation still depends on Z-Image-Turbo, denoise, mask feather, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
+
+`default_feather` controls mask edge softness in pixels. `0` is a hard rectangle edge, `8-24` is a normal soft edge, and `32+` creates a very broad transition.
+
+`default_region_strength` controls mask opacity/weight for generated region masks and `latent_with_noise_mask`. In `single_prompt_fast` it does not make the text prompt stronger. For img2img edits, keep it near `1.0` unless you intentionally want a weaker/noisier mask edge effect; use sampler denoise for edit intensity.
 
 ## Examples
 
