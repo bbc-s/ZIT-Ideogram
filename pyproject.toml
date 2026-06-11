@@ -1,0 +1,14 @@
+[project]
+name = "zit-ideogram"
+description = "ComfyUI visual regional prompt builder for Z-Image-Turbo, based on the KJNodes Ideogram box editor."
+version = "0.1.0"
+license = { text = "MIT" }
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/bbc-s/ZIT-Ideogram"
+
+[tool.comfy]
+PublisherId = "bbc-s"
+DisplayName = "ZIT-Ideogram"
+Icon = ""

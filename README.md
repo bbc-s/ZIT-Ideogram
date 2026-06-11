@@ -1,10 +1,8 @@
 # ZIT-Ideogram
 
-> # HEAVY BETA TESTING NODE WITH LOTS OF BUGS</strong>
-
-> **Warning:** This project is experimental, unstable, and actively changing. Expect broken workflows, UI issues, poor Z-Image-Turbo regional adherence, performance regressions, and compatibility bugs.
-
 ComfyUI custom node that reuses the KJNodes Ideogram 4 visual box editor pattern for Z-Image-Turbo regional prompting.
+
+This node is usable for Z-Image-Turbo regional prompting and image-to-image regional edits, but it cannot make Z-Image-Turbo behave exactly like Ideogram's native regional API. ZIT was not built specifically for hard box-constrained regional generation, so final adherence still depends on the model, prompt, mask size, denoise, and workflow.
 
 ## Node
 
@@ -30,6 +28,16 @@ Outputs:
 3. Add node: `ZIT-Ideogram/Z-Image > Z-Image-Turbo Region Builder KJ`.
 
 No extra Python packages are required.
+
+## ComfyUI Manager / Registry
+
+This repository includes `pyproject.toml` metadata for Comfy Registry / ComfyUI Manager discovery:
+
+- package id: `zit-ideogram`
+- publisher id: `bbc-s`
+- repository: `https://github.com/bbc-s/ZIT-Ideogram`
+
+To make it appear in ComfyUI Manager for other users, publish the repository to Comfy Registry or submit it to the ComfyUI-Manager custom node list. The repository itself is ready for that indexing step.
 
 ## Usage
 
@@ -83,7 +91,7 @@ Z-Image-Turbo does not natively consume Ideogram-style bounding-box caption JSON
 
 For text-to-image, region text is treated as additional positive prompt text with a rough area hint. Z-Image-Turbo may still ignore the rectangle or move the concept because it does not natively support hard regional prompt boxes.
 
-For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise_mask` as the sampler latent. The node's `batch_size` repeats a single source latent/mask when you want multiple variations. In testing, KSampler denoise around `0.6` to `0.8` is usually the practical range for visible regional changes while preserving the rest of the image. This is the closest native ComfyUI path for "only change the selected area". Preservation still depends on Z-Image-Turbo, denoise, mask feather, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
+For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise_mask` as the sampler latent. The node's `batch_size` repeats a single source latent/mask when you want multiple variations. In testing, KSampler denoise around `0.6` to `0.8` is usually the practical range for visible regional changes while preserving the rest of the image. For changes like clothing replacement, draw the region larger than the exact clothing item so the model has enough context to rebuild edges, folds, and nearby transitions. Preservation still depends on Z-Image-Turbo, denoise, mask feather, region size, and the workflow; it is not equivalent to Ideogram 4's API-level regional editor.
 
 `default_feather` controls mask edge softness in pixels. `0` is a hard rectangle edge, `8-24` is a normal soft edge, and `32+` creates a very broad transition.
 
