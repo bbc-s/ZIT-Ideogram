@@ -56,13 +56,3 @@ For image-to-image edits, connect `image` and `vae`, then use `latent_with_noise
 
 `default_region_strength` controls mask opacity/weight for generated region masks and `latent_with_noise_mask`. In `single_prompt_fast` it does not make the text prompt stronger. For img2img edits, keep it near `1.0` unless you intentionally want a weaker/noisier mask edge effect; use sampler denoise for edit intensity.
 
-## Examples
-
-Example region presets are in `examples/`:
-
-- `text_to_image_regional_prompting.json`
-- `portrait_hair_editing.json`
-- `clothing_replacement.json`
-- `background_only_modification.json`
-
-Open a Z-Image-Turbo workflow first, add this node, then use the node's `Paste` button to import the example region JSON.
