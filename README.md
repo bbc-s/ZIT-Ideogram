@@ -29,16 +29,6 @@ Outputs:
 
 No extra Python packages are required.
 
-## ComfyUI Manager / Registry
-
-This repository includes `pyproject.toml` metadata for Comfy Registry / ComfyUI Manager discovery:
-
-- package id: `zit-ideogram`
-- publisher id: `bbc-s`
-- repository: `https://github.com/bbc-s/ZIT-Ideogram`
-
-To make it appear in ComfyUI Manager for other users, publish the repository to Comfy Registry or submit it to the ComfyUI-Manager custom node list. The repository itself is ready for that indexing step.
-
 ## Usage
 
 Use ComfyUI's built-in Z-Image-Turbo workflow as the base graph, then replace the normal text encoders with this node:
